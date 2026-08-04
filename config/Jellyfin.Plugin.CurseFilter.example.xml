@@ -6,8 +6,9 @@
   <PythonPath>C:\CurseFilter\venv\Scripts\python.exe</PythonPath>
   <PipelineScriptPath>C:\CurseFilter\scripts\process_media.py</PipelineScriptPath>
   <FfmpegPath>C:\Program Files\Jellyfin\Server\ffmpeg.exe</FfmpegPath>
-  <CaptionCachePath>C:\CurseFilter\work\captions</CaptionCachePath>
-  <FilteredAudioCachePath>C:\CurseFilter\work\filtered-audio</FilteredAudioCachePath>
+  <CaptionCachePath>C:\JellyFin\captions</CaptionCachePath>
+  <FilteredAudioCachePath>C:\JellyFin\filtered-audio</FilteredAudioCachePath>
+  <ReportCachePath>C:\JellyFin\reports</ReportCachePath>
   <AnalysisDevice>cuda</AnalysisDevice>
   <AlignmentModel>facebook/wav2vec2-base-960h</AlignmentModel>
   <AnalysisMode>auto</AnalysisMode>

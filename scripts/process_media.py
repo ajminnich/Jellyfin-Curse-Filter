@@ -18,6 +18,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("captions", type=Path, nargs="?")
     parser.add_argument("--output", type=Path)
     parser.add_argument(
+        "--report-dir",
+        type=Path,
+        default=PROJECT_ROOT / "work" / "reports",
+        help="Directory for analysis reports and temporary clips",
+    )
+    parser.add_argument(
         "--ffmpeg",
         type=Path,
         default=Path(r"C:\Program Files\Jellyfin\Server\ffmpeg.exe"),
@@ -37,7 +43,7 @@ def main() -> int:
         ffmpeg_path=args.ffmpeg,
         profanity_path=PROJECT_ROOT / "config" / "profanity.en.txt",
         model_dir=PROJECT_ROOT / ".models",
-        report_dir=PROJECT_ROOT / "work" / "reports",
+        report_dir=args.report_dir,
         model_name=args.model,
         transcription_model=args.transcription_model,
         analysis_mode=args.mode,

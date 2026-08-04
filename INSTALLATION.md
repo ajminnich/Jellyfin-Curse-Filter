@@ -45,9 +45,10 @@ Stop Jellyfin. Copy
 [`config/Jellyfin.Plugin.CurseFilter.example.xml`](config/Jellyfin.Plugin.CurseFilter.example.xml)
 to Jellyfin's plugin configuration directory as
 `Jellyfin.Plugin.CurseFilter.xml` (normally
-`C:\ProgramData\Jellyfin\Server\config\plugins\`). Set all paths for your
+`C:\ProgramData\Jellyfin\Server\plugins\configurations\`). Set all paths for your
 machine, especially the repository clone, Python virtual environment, media
-roots, cache folders, and Jellyfin's `ffmpeg.exe`.
+roots, cache folders, and Jellyfin's `ffmpeg.exe`. Keep cache paths outside a
+OneDrive-synced folder; the example uses `C:\JellyFin`.
 
 Keep `Enabled` set to `false` until you have tested a small library. Restart
 Jellyfin, edit the configuration to set `Enabled` to `true`, then restart once

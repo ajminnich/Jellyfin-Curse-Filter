@@ -72,6 +72,7 @@ public sealed class ProcessLibraryTask : IScheduledTask
         ValidateConfiguration(configuration);
         Directory.CreateDirectory(configuration.CaptionCachePath);
         Directory.CreateDirectory(configuration.FilteredAudioCachePath);
+        Directory.CreateDirectory(configuration.ReportCachePath);
         string[] configuredRoots = GetConfiguredRoots(configuration)
             .Where(Directory.Exists)
             .ToArray();
@@ -157,7 +158,8 @@ public sealed class ProcessLibraryTask : IScheduledTask
         {
             configuration.PythonPath,
             configuration.PipelineScriptPath,
-            configuration.FfmpegPath
+            configuration.FfmpegPath,
+            configuration.ReportCachePath
         };
         foreach (string path in requiredFiles)
         {
@@ -302,7 +304,8 @@ public sealed class ProcessLibraryTask : IScheduledTask
                 "--device", configuration.AnalysisDevice,
                 "--model", configuration.AlignmentModel,
                 "--mode", selectedMode,
-                "--transcription-model", configuration.TranscriptionModel
+                "--transcription-model", configuration.TranscriptionModel,
+                "--report-dir", configuration.ReportCachePath
             });
             ProcessResult result = await RunProcessAsync(
                 configuration.PythonPath,

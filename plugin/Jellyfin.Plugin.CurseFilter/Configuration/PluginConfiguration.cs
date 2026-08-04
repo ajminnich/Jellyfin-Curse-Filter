@@ -29,6 +29,9 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets the private directory used to retain separate filtered audio files.</summary>
     public string FilteredAudioCachePath { get; set; } = string.Empty;
 
+    /// <summary>Gets or sets the directory used for analysis reports and temporary clips.</summary>
+    public string ReportCachePath { get; set; } = string.Empty;
+
     /// <summary>Gets or sets the GPU device passed to the analysis pipeline.</summary>
     public string AnalysisDevice { get; set; } = "cuda";
 
