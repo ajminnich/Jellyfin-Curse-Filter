@@ -158,8 +158,7 @@ public sealed class ProcessLibraryTask : IScheduledTask
         {
             configuration.PythonPath,
             configuration.PipelineScriptPath,
-            configuration.FfmpegPath,
-            configuration.ReportCachePath
+            configuration.FfmpegPath
         };
         foreach (string path in requiredFiles)
         {

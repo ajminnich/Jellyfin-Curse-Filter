@@ -1,14 +1,14 @@
 {
   "category": "MoviesAndShows",
-  "changelog": "Moves configurable captions, filtered audio, analysis reports, and temporary clips outside OneDrive-synced project folders.",
+  "changelog": "Fixes local report-cache validation while retaining configurable captions, filtered audio, reports, and clips outside OneDrive.",
   "description": "Makes caption- or audio-analyzed bleeped media the default while preserving each original as a reversible backup.",
   "guid": "6f461ea8-0e47-4dc9-b27f-ab182516aed9",
   "name": "Curse Filter",
   "overview": "Caption-guided or caption-free profanity bleeping for Jellyfin libraries",
   "owner": "ajminnich",
   "targetAbi": "10.11.11.0",
-  "timestamp": "2026-08-04T17:15:00.0000000Z",
-  "version": "0.2.2.0",
+  "timestamp": "2026-08-04T17:25:00.0000000Z",
+  "version": "0.2.3.0",
   "status": "Active",
   "autoUpdate": false,
   "assemblies": []
