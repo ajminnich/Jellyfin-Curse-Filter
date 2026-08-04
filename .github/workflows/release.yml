@@ -19,6 +19,18 @@ jobs:
       - name: Build release archive
         shell: pwsh
         run: .\scripts\build-plugin-release.ps1
+      - name: Update repository feed checksum
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add repository.json
+          if (git diff --cached --quiet) {
+            Write-Host 'Repository feed is already current.'
+          } else {
+            git commit -m "Update plugin feed for $env:GITHUB_REF_NAME"
+            git push origin HEAD:main
+          }
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:

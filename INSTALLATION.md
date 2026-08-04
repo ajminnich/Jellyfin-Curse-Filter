@@ -85,8 +85,8 @@ git pull
 2. Run `./scripts/build-plugin-release.ps1`.
 3. Commit the generated `repository.json` with the source changes.
 4. Push the commit, then create and push the matching tag, for example `v0.2.1.0`.
-5. The GitHub Actions workflow builds the archive and creates the GitHub release. Jellyfin will discover the new feed version on its next refresh.
+5. The GitHub Actions workflow builds the archive, updates `repository.json` with the checksum of that exact archive, and creates the GitHub release. Jellyfin will discover the new feed version on its next refresh.
 
-The GitHub Actions release asset is intentionally not committed. The checksum in
-`repository.json` is generated from the same archive layout as the release
-workflow.
+The GitHub Actions release asset is intentionally not committed. The workflow
+commits the final checksum because a GitHub-hosted build has a different archive
+checksum from a local build.
