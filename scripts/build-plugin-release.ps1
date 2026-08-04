@@ -64,7 +64,7 @@ $repository = @(
         )
     }
 )
-$repository | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $projectRoot 'repository.json') -Encoding utf8
+ConvertTo-Json -InputObject $repository -Depth 6 | Set-Content -LiteralPath (Join-Path $projectRoot 'repository.json') -Encoding utf8
 
 Write-Host "Created $archivePath"
 Write-Host "SHA-256: $checksum"
