@@ -1,20 +1,20 @@
-﻿[
-    {
-        "guid":  "6f461ea8-0e47-4dc9-b27f-ab182516aed9",
-        "name":  "Curse Filter",
-        "overview":  "Caption-guided or caption-free profanity bleeping for Jellyfin libraries",
-        "description":  "Makes caption- or audio-analyzed bleeped media the default while preserving each original as a reversible backup.",
-        "owner":  "Jellyfin Curse Filter contributors",
-        "category":  "MoviesAndShows",
-        "versions":  [
-                         {
-                             "version":  "0.2.2.0",
-                             "changelog":  "Moves configurable captions, filtered audio, analysis reports, and temporary clips outside OneDrive-synced project folders.",
-                             "targetAbi":  "10.11.11.0",
-                             "sourceUrl":  "https://github.com/ajminnich/Jellyfin-Curse-Filter/releases/download/v0.2.2.0/Jellyfin.Plugin.CurseFilter_0.2.2.0.zip",
-                             "checksum":  "e03b7e4518f83313f25da6cf108b1bf350762a1a4577b06840238a21b83f9631",
-                             "timestamp":  "2026-08-04T17:15:00.0000000Z"
-                         }
-                     ]
-    }
+[
+  {
+    "guid": "6f461ea8-0e47-4dc9-b27f-ab182516aed9",
+    "name": "Curse Filter",
+    "overview": "Caption-guided or caption-free profanity bleeping for Jellyfin libraries",
+    "description": "Makes caption- or audio-analyzed bleeped media the default while preserving each original as a reversible backup.",
+    "owner": "Jellyfin Curse Filter contributors",
+    "category": "MoviesAndShows",
+    "versions": [
+      {
+        "version": "0.2.2.0",
+        "changelog": "Moves configurable captions, filtered audio, analysis reports, and temporary clips outside OneDrive-synced project folders.",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/ajminnich/Jellyfin-Curse-Filter/releases/download/v0.2.2.0/Jellyfin.Plugin.CurseFilter_0.2.2.0.zip",
+        "checksum": "2d9cdea137d722e2b8aa773bc5dc9734f36f5c5ebf244d00f6dd44edd97aaa46",
+        "timestamp": "2026-08-04T17:15:00Z"
+      }
+    ]
+  }
 ]
