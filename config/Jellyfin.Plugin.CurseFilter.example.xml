@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Enabled>false</Enabled>
+  <MediaRoot>D:\Media\TV</MediaRoot>
+  <MovieMediaRoot>D:\Media\Movies</MovieMediaRoot>
+  <PythonPath>C:\CurseFilter\venv\Scripts\python.exe</PythonPath>
+  <PipelineScriptPath>C:\CurseFilter\scripts\process_media.py</PipelineScriptPath>
+  <FfmpegPath>C:\Program Files\Jellyfin\Server\ffmpeg.exe</FfmpegPath>
+  <CaptionCachePath>C:\CurseFilter\work\captions</CaptionCachePath>
+  <FilteredAudioCachePath>C:\CurseFilter\work\filtered-audio</FilteredAudioCachePath>
+  <AnalysisDevice>cuda</AnalysisDevice>
+  <AlignmentModel>facebook/wav2vec2-base-960h</AlignmentModel>
+  <AnalysisMode>auto</AnalysisMode>
+  <TranscriptionModel>small.en</TranscriptionModel>
+  <OverwriteExisting>false</OverwriteExisting>
+</PluginConfiguration>

@@ -1,0 +1,17 @@
+.venv/
+.models/
+.packages/
+.dotnet-cli/
+.dotnet-cli-home/
+.dotnet-home/
+plugin/**/bin/
+plugin/**/obj/
+work/clips/
+work/
+Test Shows/
+.pytest_cache/
+config/Jellyfin.Plugin.CurseFilter.xml
+release/
+**/__pycache__/
+*.pyc
+*.mka
