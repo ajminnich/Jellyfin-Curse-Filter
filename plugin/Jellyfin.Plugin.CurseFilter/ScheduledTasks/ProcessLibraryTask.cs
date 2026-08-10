@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using Jellyfin.Data.Enums;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Jellyfin.Plugin.CurseFilter.Configuration;
-using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
@@ -14,6 +14,7 @@ namespace Jellyfin.Plugin.CurseFilter.ScheduledTasks;
 public sealed class ProcessLibraryTask : IScheduledTask
 {
     private const string FilteredTrackTitle = "Filtered English (Bleep)";
+    private const string CaptionSelectionRevision = "2";
 
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -48,7 +49,7 @@ public sealed class ProcessLibraryTask : IScheduledTask
         yield return new TaskTriggerInfo
         {
             Type = TaskTriggerInfoType.StartupTrigger,
-            IntervalTicks = TimeSpan.FromMinutes(1).Ticks
+            IntervalTicks = TimeSpan.FromSeconds(10).Ticks
         };
         yield return new TaskTriggerInfo
         {
@@ -77,21 +78,12 @@ public sealed class ProcessLibraryTask : IScheduledTask
             .Where(Directory.Exists)
             .ToArray();
 
-        IReadOnlyList<BaseItem> items = _libraryManager.GetItemList(new InternalItemsQuery
-        {
-            Recursive = true,
-            IncludeItemTypes = new[] { BaseItemKind.Movie, BaseItemKind.Episode },
-            IsVirtualItem = false
-        });
-        BaseItem[] candidates = items
-            .Where(item => configuredRoots.Any(root => IsCandidate(item.Path, root)))
-            .OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        string[] candidates = DiscoverCandidatePaths(configuredRoots);
         string promotionRefreshMarker = Path.Combine(
             configuration.FilteredAudioCachePath,
             ".promotion-index-refreshed");
         bool needsPromotionIndexRefresh = !File.Exists(promotionRefreshMarker)
-            && candidates.Any(item => File.Exists(item.Path + ".cursefilter-original"));
+            && candidates.Any(path => File.Exists(path + ".cursefilter-original"));
 
         _logger.LogInformation(
             "Curse Filter found {Count} video items under {Roots}.",
@@ -107,10 +99,10 @@ public sealed class ProcessLibraryTask : IScheduledTask
         for (int index = 0; index < candidates.Length; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            BaseItem item = candidates[index];
+            string mediaPath = candidates[index];
             try
             {
-                createdAny |= await ProcessItemAsync(item.Path, configuration, cancellationToken).ConfigureAwait(false);
+                createdAny |= await ProcessItemAsync(mediaPath, configuration, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -118,7 +110,7 @@ public sealed class ProcessLibraryTask : IScheduledTask
             }
             catch (Exception exception)
             {
-                _logger.LogError(exception, "Curse Filter failed for {Path}; processing will continue.", item.Path);
+                _logger.LogError(exception, "Curse Filter failed for {Path}; processing will continue.", mediaPath);
             }
 
             progress.Report((index + 1) * 100.0 / candidates.Length);
@@ -133,6 +125,23 @@ public sealed class ProcessLibraryTask : IScheduledTask
                 File.WriteAllText(promotionRefreshMarker, DateTimeOffset.UtcNow.ToString("O"));
             }
         }
+    }
+
+    private static string[] DiscoverCandidatePaths(IEnumerable<string> configuredRoots)
+    {
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            ReturnSpecialDirectories = false
+        };
+
+        return configuredRoots
+            .SelectMany(root => Directory.EnumerateFiles(root, "*", options)
+                .Where(path => IsCandidate(path, root)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static bool IsCandidate(string? path, string configuredRoot)
@@ -205,11 +214,32 @@ public sealed class ProcessLibraryTask : IScheduledTask
         string ffprobePath = Path.Combine(
             Path.GetDirectoryName(configuration.FfmpegPath) ?? string.Empty,
             "ffprobe.exe");
+        string? localCaptionPath = null;
+        bool createdJellyfinSidecar = false;
+        bool sidecarNeedsLibraryRefresh = false;
+        if (!configuration.AnalysisMode.Equals("audio", StringComparison.OrdinalIgnoreCase))
+        {
+            localCaptionPath = FindLocalCaptionSidecar(mediaPath, out createdJellyfinSidecar);
+            if (localCaptionPath is not null)
+            {
+                sidecarNeedsLibraryRefresh = MarkSidecarForJellyfinRefresh(
+                    mediaPath,
+                    localCaptionPath,
+                    configuration.FilteredAudioCachePath);
+                if (createdJellyfinSidecar)
+                {
+                    _logger.LogInformation("Created Jellyfin-compatible subtitle sidecar {CaptionPath}.", localCaptionPath);
+                }
+
+                _logger.LogInformation("Using local subtitle sidecar {CaptionPath} for {Path}.", localCaptionPath, mediaPath);
+            }
+        }
+
         if (await HasFilteredTrackAsync(mediaPath, ffprobePath, cancellationToken).ConfigureAwait(false)
             && await HasCompatibleVideoAsync(mediaPath, ffprobePath, cancellationToken).ConfigureAwait(false))
         {
             _logger.LogDebug("The library copy is already filtered and playback-compatible: {Path}.", mediaPath);
-            return false;
+            return sidecarNeedsLibraryRefresh;
         }
 
         string playbackPath = Path.Combine(directory, $"{stem} - Filtered.mkv");
@@ -247,42 +277,51 @@ public sealed class ProcessLibraryTask : IScheduledTask
         string selectedMode = configuration.AnalysisMode.ToLowerInvariant();
         if (selectedMode != "audio")
         {
-            string candidateCaptionPath = Path.Combine(
-                configuration.CaptionCachePath,
-                $"{stem}.{cacheSuffix}.eng.srt");
-            if (File.Exists(candidateCaptionPath)
-                || await ExtractCaptionAsync(
-                    mediaPath,
-                    candidateCaptionPath,
-                    configuration.FfmpegPath,
-                    cancellationToken).ConfigureAwait(false))
+            if (localCaptionPath is not null)
             {
-                captionPath = candidateCaptionPath;
+                captionPath = localCaptionPath;
                 selectedMode = "captions";
-            }
-            else if (selectedMode == "captions")
-            {
-                _logger.LogWarning("No usable embedded caption track was found for {Path}; skipping caption mode.", mediaPath);
-                return false;
             }
             else
             {
-                selectedMode = "audio";
-                _logger.LogInformation(
-                    "No usable embedded captions were found for {Path}; using caption-free audio analysis.",
-                    mediaPath);
+                string candidateCaptionPath = Path.Combine(
+                    configuration.CaptionCachePath,
+                    $"{stem}.{cacheSuffix}.eng.v{CaptionSelectionRevision}.srt");
+                if (File.Exists(candidateCaptionPath)
+                    || await ExtractCaptionAsync(
+                        mediaPath,
+                        candidateCaptionPath,
+                        configuration.FfmpegPath,
+                        ffprobePath,
+                        cancellationToken).ConfigureAwait(false))
+                {
+                    captionPath = candidateCaptionPath;
+                    selectedMode = "captions";
+                }
+                else if (selectedMode == "captions")
+                {
+                    _logger.LogWarning("No usable English caption track was found for {Path}; skipping caption mode.", mediaPath);
+                    return sidecarNeedsLibraryRefresh;
+                }
+                else
+                {
+                    selectedMode = "audio";
+                    _logger.LogInformation(
+                        "No usable English captions were found for {Path}; using caption-free audio analysis.",
+                        mediaPath);
+                }
             }
         }
 
         if (!File.Exists(outputPath) || configuration.OverwriteExisting)
         {
-            string analysisSignature = GetAnalysisSignature(mediaPath, configuration, selectedMode);
+            string analysisSignature = GetAnalysisSignature(mediaPath, configuration, selectedMode, captionPath);
             if (!configuration.OverwriteExisting
                 && File.Exists(cleanMarkerPath)
                 && File.ReadAllText(cleanMarkerPath).Equals(analysisSignature, StringComparison.Ordinal))
             {
                 _logger.LogDebug("A current clean analysis already exists for {Path}.", mediaPath);
-                return false;
+                return sidecarNeedsLibraryRefresh;
             }
 
             _logger.LogInformation("Creating filtered audio for {Path} in {Mode} mode.", mediaPath, selectedMode);
@@ -319,7 +358,7 @@ public sealed class ProcessLibraryTask : IScheduledTask
             {
                 File.WriteAllText(cleanMarkerPath, analysisSignature);
                 _logger.LogInformation("No configured profanity was detected in {Path}; no filtered copy is needed.", mediaPath);
-                return false;
+                return sidecarNeedsLibraryRefresh;
             }
 
             if (File.Exists(cleanMarkerPath))
@@ -344,10 +383,14 @@ public sealed class ProcessLibraryTask : IScheduledTask
     private static string GetAnalysisSignature(
         string mediaPath,
         PluginConfiguration configuration,
-        string selectedMode)
+        string selectedMode,
+        string? captionPath)
     {
         var media = new FileInfo(mediaPath);
         var pipeline = new FileInfo(configuration.PipelineScriptPath);
+        var caption = captionPath is not null && File.Exists(captionPath)
+            ? new FileInfo(captionPath)
+            : null;
         return string.Join(
             "|",
             media.Length,
@@ -355,7 +398,11 @@ public sealed class ProcessLibraryTask : IScheduledTask
             pipeline.LastWriteTimeUtc.Ticks,
             selectedMode,
             configuration.AlignmentModel,
-            configuration.TranscriptionModel);
+            configuration.TranscriptionModel,
+            $"caption-selection-v{CaptionSelectionRevision}",
+            caption?.FullName ?? string.Empty,
+            caption?.Length ?? 0,
+            caption?.LastWriteTimeUtc.Ticks ?? 0);
     }
 
     private static void PromoteFilteredVersion(string mediaPath, string playbackPath, string promotedPath)
@@ -553,18 +600,159 @@ public sealed class ProcessLibraryTask : IScheduledTask
         return true;
     }
 
+    private static bool MarkSidecarForJellyfinRefresh(
+        string mediaPath,
+        string captionPath,
+        string cachePath)
+    {
+        Directory.CreateDirectory(cachePath);
+        string cacheSuffix = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(mediaPath))))
+            .Substring(0, 12)
+            .ToLowerInvariant();
+        string markerPath = Path.Combine(
+            cachePath,
+            $"{Path.GetFileNameWithoutExtension(mediaPath)}.{cacheSuffix}.subtitle-indexed");
+        var caption = new FileInfo(captionPath);
+        string signature = string.Join(
+            "|",
+            caption.FullName,
+            caption.Length,
+            caption.LastWriteTimeUtc.Ticks);
+        if (File.Exists(markerPath)
+            && File.ReadAllText(markerPath).Equals(signature, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        File.WriteAllText(markerPath, signature);
+        return true;
+    }
+
+    private static string? FindLocalCaptionSidecar(string mediaPath, out bool createdJellyfinSidecar)
+    {
+        createdJellyfinSidecar = false;
+        string directory = Path.GetDirectoryName(mediaPath)
+            ?? throw new InvalidOperationException($"Media item has no parent directory: {mediaPath}");
+        string stem = Path.GetFileNameWithoutExtension(mediaPath);
+        string canonicalPath = Path.Combine(directory, $"{stem}.eng.srt");
+        if (File.Exists(canonicalPath))
+        {
+            return canonicalPath;
+        }
+
+        string[] subtitleFiles = Directory.GetFiles(directory, "*.srt", SearchOption.TopDirectoryOnly);
+        if (subtitleFiles.Length == 0)
+        {
+            return null;
+        }
+
+        Match episodeMatch = Regex.Match(stem, @"S\d{1,2}E\d{1,3}", RegexOptions.IgnoreCase);
+        string? episodeToken = episodeMatch.Success ? episodeMatch.Value : null;
+        var candidates = subtitleFiles
+            .Where(path => !Path.GetFileName(path).Contains("forced", StringComparison.OrdinalIgnoreCase))
+            .Select(path => new
+            {
+                Path = path,
+                Score = ScoreCaptionSidecar(path, stem, episodeToken, subtitleFiles.Length)
+            })
+            .Where(candidate => candidate.Score >= 0)
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenBy(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (candidates.Length == 0)
+        {
+            return null;
+        }
+
+        string selectedPath = candidates[0].Path;
+        string selectedName = Path.GetFileNameWithoutExtension(selectedPath);
+        bool alreadyJellyfinNamed = selectedName.Equals(stem, StringComparison.OrdinalIgnoreCase)
+            || selectedName.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase);
+        if (alreadyJellyfinNamed)
+        {
+            return selectedPath;
+        }
+
+        File.Copy(selectedPath, canonicalPath, false);
+        createdJellyfinSidecar = true;
+        return canonicalPath;
+    }
+
+    private static int ScoreCaptionSidecar(
+        string captionPath,
+        string mediaStem,
+        string? episodeToken,
+        int subtitleCount)
+    {
+        string captionStem = Path.GetFileNameWithoutExtension(captionPath);
+        int score;
+        if (captionStem.Equals($"{mediaStem}.eng", StringComparison.OrdinalIgnoreCase))
+        {
+            score = 1000;
+        }
+        else if (captionStem.Equals($"{mediaStem}.en", StringComparison.OrdinalIgnoreCase))
+        {
+            score = 990;
+        }
+        else if (captionStem.Equals(mediaStem, StringComparison.OrdinalIgnoreCase))
+        {
+            score = 980;
+        }
+        else if (captionStem.StartsWith(mediaStem + ".", StringComparison.OrdinalIgnoreCase))
+        {
+            score = 900;
+        }
+        else if (episodeToken is not null
+            && captionStem.Contains(episodeToken, StringComparison.OrdinalIgnoreCase))
+        {
+            score = 700;
+        }
+        else if (subtitleCount == 1)
+        {
+            score = 500;
+        }
+        else
+        {
+            return -1;
+        }
+
+        if (Regex.IsMatch(captionStem, @"(^|[. _-])(eng|en|english)([. _-]|$)", RegexOptions.IgnoreCase))
+        {
+            score += 40;
+        }
+
+        if (captionStem.Contains("sdh", StringComparison.OrdinalIgnoreCase)
+            || captionStem.Contains("hearing", StringComparison.OrdinalIgnoreCase))
+        {
+            score -= 10;
+        }
+
+        return score;
+    }
+
     private static async Task<bool> ExtractCaptionAsync(
         string mediaPath,
         string captionPath,
         string ffmpegPath,
+        string ffprobePath,
         CancellationToken cancellationToken)
     {
+        int? streamIndex = await SelectEmbeddedEnglishCaptionAsync(
+            mediaPath,
+            ffprobePath,
+            cancellationToken).ConfigureAwait(false);
+        if (streamIndex is null)
+        {
+            return false;
+        }
+
         string temporaryPath = captionPath + ".partial.srt";
         var arguments = new[]
         {
             "-hide_banner", "-loglevel", "error", "-y",
             "-i", mediaPath,
-            "-map", "0:s:0",
+            "-map", $"0:{streamIndex.Value}",
             "-c:s", "srt",
             temporaryPath
         };
@@ -581,6 +769,100 @@ public sealed class ProcessLibraryTask : IScheduledTask
 
         File.Move(temporaryPath, captionPath, true);
         return true;
+    }
+
+    private static async Task<int?> SelectEmbeddedEnglishCaptionAsync(
+        string mediaPath,
+        string ffprobePath,
+        CancellationToken cancellationToken)
+    {
+        var arguments = new[]
+        {
+            "-v", "error",
+            "-select_streams", "s",
+            "-show_entries", "stream=index:stream_tags=language,title:stream_disposition=forced,hearing_impaired",
+            "-of", "json",
+            mediaPath
+        };
+        ProcessResult result = await RunProcessAsync(ffprobePath, arguments, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.Output))
+        {
+            return null;
+        }
+
+        using JsonDocument document = JsonDocument.Parse(result.Output);
+        if (!document.RootElement.TryGetProperty("streams", out JsonElement streams))
+        {
+            return null;
+        }
+
+        var candidates = new List<(int Index, int Score)>();
+        foreach (JsonElement stream in streams.EnumerateArray())
+        {
+            if (!stream.TryGetProperty("index", out JsonElement indexElement))
+            {
+                continue;
+            }
+
+            string language = string.Empty;
+            string title = string.Empty;
+            if (stream.TryGetProperty("tags", out JsonElement tags))
+            {
+                if (tags.TryGetProperty("language", out JsonElement languageElement))
+                {
+                    language = languageElement.GetString() ?? string.Empty;
+                }
+
+                if (tags.TryGetProperty("title", out JsonElement titleElement))
+                {
+                    title = titleElement.GetString() ?? string.Empty;
+                }
+            }
+
+            bool isEnglish = language.Equals("eng", StringComparison.OrdinalIgnoreCase)
+                || language.Equals("en", StringComparison.OrdinalIgnoreCase)
+                || language.Equals("english", StringComparison.OrdinalIgnoreCase);
+            if (!isEnglish)
+            {
+                continue;
+            }
+
+            int forced = 0;
+            int hearingImpaired = 0;
+            if (stream.TryGetProperty("disposition", out JsonElement disposition))
+            {
+                if (disposition.TryGetProperty("forced", out JsonElement forcedElement))
+                {
+                    forced = forcedElement.GetInt32();
+                }
+
+                if (disposition.TryGetProperty("hearing_impaired", out JsonElement hearingElement))
+                {
+                    hearingImpaired = hearingElement.GetInt32();
+                }
+            }
+
+            if (forced != 0 || title.Contains("forced", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            int score = 100;
+            if (hearingImpaired == 0
+                && !title.Contains("sdh", StringComparison.OrdinalIgnoreCase)
+                && !title.Contains("hearing", StringComparison.OrdinalIgnoreCase))
+            {
+                score += 20;
+            }
+
+            candidates.Add((indexElement.GetInt32(), score));
+        }
+
+        return candidates
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenBy(candidate => candidate.Index)
+            .Select(candidate => (int?)candidate.Index)
+            .FirstOrDefault();
     }
 
     private static async Task<ProcessResult> RunProcessAsync(
