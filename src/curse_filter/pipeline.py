@@ -547,7 +547,7 @@ def _duration_seconds(ffprobe_path: Path, media_path: Path) -> float:
     return float(result.stdout.strip())
 
 
-def _audio_channel_layout(ffprobe_path: Path, media_path: Path) -> str:
+def _audio_stream_properties(ffprobe_path: Path, media_path: Path) -> tuple[str, str, int]:
     result = subprocess.run(
         [
             str(ffprobe_path),
@@ -556,16 +556,34 @@ def _audio_channel_layout(ffprobe_path: Path, media_path: Path) -> str:
             "-select_streams",
             "a:0",
             "-show_entries",
-            "stream=channel_layout",
+            "stream=codec_name,channel_layout,channels",
             "-of",
-            "default=noprint_wrappers=1:nokey=1",
+            "json",
             str(media_path),
         ],
         check=True,
         capture_output=True,
         text=True,
     )
-    return result.stdout.strip().lower()
+    streams = json.loads(result.stdout).get("streams", [])
+    if not streams:
+        raise ValueError(f"No audio stream found in {media_path}")
+    stream = streams[0]
+    return (
+        str(stream.get("codec_name", "")).lower(),
+        str(stream.get("channel_layout", "")).lower(),
+        int(stream.get("channels", 0)),
+    )
+
+
+def _filtered_audio_codec(source_codec: str, channels: int) -> str:
+    # Android TV devices commonly pass AC-3/E-AC-3 through HDMI, but must
+    # decode AAC to multichannel PCM. Some TV/receiver combinations stall on
+    # that 5.1 PCM path even though the AAC decoder itself initializes. Keep
+    # multichannel Dolby-family sources on their proven E-AC-3 transport path.
+    if channels > 2 and source_codec.lower() in {"ac3", "eac3"}:
+        return "eac3"
+    return "aac"
 
 
 def _canonical_aac_layout_suffix(channel_layout: str) -> str:
@@ -595,8 +613,10 @@ def render_bleep_audio(
         raise ValueError("Refusing to render a filtered track with no censor intervals")
     ffprobe_path = options.ffmpeg_path.with_name("ffprobe.exe")
     duration = _duration_seconds(ffprobe_path, media_path)
-    layout_suffix = _canonical_aac_layout_suffix(
-        _audio_channel_layout(ffprobe_path, media_path)
+    source_codec, channel_layout, channels = _audio_stream_properties(ffprobe_path, media_path)
+    output_codec = _filtered_audio_codec(source_codec, channels)
+    layout_suffix = (
+        _canonical_aac_layout_suffix(channel_layout) if output_codec == "aac" else ""
     )
     commands: list[str] = []
     for interval in intervals:
@@ -633,6 +653,11 @@ def render_bleep_audio(
         ) as filter_script:
             filter_script.write(filter_graph)
             filter_script_path = Path(filter_script.name)
+        codec_arguments = (
+            ["-c:a", "eac3", "-b:a", "256k"]
+            if output_codec == "eac3"
+            else ["-c:a", "aac", "-profile:a", "aac_low", "-b:a", options.audio_bitrate]
+        )
         _run(
             [
                 options.ffmpeg_path,
@@ -650,12 +675,7 @@ def render_bleep_audio(
                 filter_script_path,
                 "-map",
                 "[out]",
-                "-c:a",
-                "aac",
-                "-profile:a",
-                "aac_low",
-                "-b:a",
-                options.audio_bitrate,
+                *codec_arguments,
                 "-metadata:s:a:0",
                 "language=eng",
                 "-metadata:s:a:0",
