@@ -49,7 +49,9 @@ The checked-in defaults are:
 - 1,000 Hz bleep
 - 40 ms timing padding
 - NVIDIA H.264 High/yuv420p compatibility video
-- AAC-in-Matroska filtered audio, retained separately and embedded for playback
+- AAC-in-Matroska filtered audio, with `5.1(side)` normalized to canonical AAC
+  5.1 signaling for Android TV compatibility, retained separately and embedded
+  for playback
 
 Run `scripts/process_wrexham.ps1` after installing the analysis dependencies.
 

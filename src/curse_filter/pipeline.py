@@ -547,6 +547,40 @@ def _duration_seconds(ffprobe_path: Path, media_path: Path) -> float:
     return float(result.stdout.strip())
 
 
+def _audio_channel_layout(ffprobe_path: Path, media_path: Path) -> str:
+    result = subprocess.run(
+        [
+            str(ffprobe_path),
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=channel_layout",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(media_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip().lower()
+
+
+def _canonical_aac_layout_suffix(channel_layout: str) -> str:
+    if channel_layout.lower() != "5.1(side)":
+        return ""
+    # AAC's standard 5.1 channel configuration uses back-surround labels.
+    # Encoding 5.1(side) directly requires a Program Config Element, which
+    # some Android MediaCodec implementations fail to play. Preserve the six
+    # channels while relabeling side surrounds as their canonical AAC peers.
+    return (
+        ",channelmap="
+        "map=FL-FL|FR-FR|FC-FC|LFE-LFE|SL-BL|SR-BR:channel_layout=5.1"
+    )
+
+
 def _timeline_expression(intervals: Sequence[CensorInterval]) -> str:
     return "+".join(f"between(t,{interval.start:.3f},{interval.end:.3f})" for interval in intervals) or "0"
 
@@ -561,6 +595,9 @@ def render_bleep_audio(
         raise ValueError("Refusing to render a filtered track with no censor intervals")
     ffprobe_path = options.ffmpeg_path.with_name("ffprobe.exe")
     duration = _duration_seconds(ffprobe_path, media_path)
+    layout_suffix = _canonical_aac_layout_suffix(
+        _audio_channel_layout(ffprobe_path, media_path)
+    )
     commands: list[str] = []
     for interval in intervals:
         # Runtime audio commands take effect on the next decoded frame. Send
@@ -580,7 +617,8 @@ def render_bleep_audio(
         f"[0:a:0]volume@clean=1,asendcmd=c='{command_expression}'[clean];"
         "[1:a]volume@beep=0,"
         "pan=stereo|c0=c0|c1=c0[beep];"
-        "[clean][beep]amix=inputs=2:duration=first:normalize=0[out]"
+        "[clean][beep]amix=inputs=2:duration=first:normalize=0"
+        f"{layout_suffix}[out]"
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     filter_script_path: Path | None = None
@@ -614,6 +652,8 @@ def render_bleep_audio(
                 "[out]",
                 "-c:a",
                 "aac",
+                "-profile:a",
+                "aac_low",
                 "-b:a",
                 options.audio_bitrate,
                 "-metadata:s:a:0",
