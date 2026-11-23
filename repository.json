@@ -8,12 +8,12 @@
     "category": "MoviesAndShows",
     "versions": [
       {
-        "version": "0.2.3.0",
-        "changelog": "Fixes local report-cache validation while retaining configurable captions, filtered audio, reports, and clips outside OneDrive.",
+        "version": "0.2.4.0",
+        "changelog": "Improves English subtitle discovery, fixes surround-audio playback on Android TV, and pares back the default English profanity list.",
         "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/ajminnich/Jellyfin-Curse-Filter/releases/download/v0.2.3.0/Jellyfin.Plugin.CurseFilter_0.2.3.0.zip",
-        "checksum": "bd912da8e47f8f3e46a7a28c9ae1edaafa7b3c13f9c9f99be1e88e70147ce99a",
-        "timestamp": "2026-08-04T17:25:00Z"
+        "sourceUrl": "https://github.com/ajminnich/Jellyfin-Curse-Filter/releases/download/v0.2.4.0/Jellyfin.Plugin.CurseFilter_0.2.4.0.zip",
+        "checksum": "05c7d153f03bed67698fc468c78d81d0cc135c59d9fcc15e23e222a98e359796",
+        "timestamp": "2026-11-23T01:24:53Z"
       }
     ]
   }
