@@ -7,21 +7,16 @@ ass
 asses
 asshole
 assholes
-bastard
-bastards
 bitch
 bitches
 bitching
 bitchy
-bollocks
 bullshit
 bullshitting
 cock
 cocks
 cocksucker
 cocksuckers
-crap
-crappy
 cunt
 cunts
 damn
@@ -31,9 +26,6 @@ dick
 dickhead
 dickheads
 dicks
-douche
-douchebag
-douchebags
 fuck
 fucked
 fucker
@@ -47,12 +39,6 @@ horseshit
 motherfucker
 motherfuckers
 motherfucking
-piss
-pissed
-pisses
-pissing
-prick
-pricks
 pussy
 pussies
 shit
@@ -60,12 +46,6 @@ shithead
 shitheads
 shits
 shitty
-slut
-sluts
-twat
-twats
-wanker
-wankers
 whore
 whores
 

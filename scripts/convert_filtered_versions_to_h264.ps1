@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$MediaRoot = 'C:\TV Shows\Welcome.to.Wrexham.S04.1080p.WEBRip.x265-KONTRAST',
+    [string]$MediaRoot = 'E:\TV Shows\Welcome.to.Wrexham.S04.1080p.WEBRip.x265-KONTRAST',
     [string]$FfmpegPath = 'C:\Program Files\Jellyfin\Server\ffmpeg.exe',
     [string]$FilePattern = '* - Filtered.mkv'
 )

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$MediaRoot = 'C:\TV Shows\Welcome.to.Wrexham.S04.1080p.WEBRip.x265-KONTRAST',
-    [string]$CacheRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) 'work\filtered-audio'),
+    [string]$MediaRoot = 'E:\TV Shows\Welcome.to.Wrexham.S04.1080p.WEBRip.x265-KONTRAST',
+    [string]$CacheRoot = 'E:\JellyFin\filtered-audio',
     [string]$FfmpegPath = 'C:\Program Files\Jellyfin\Server\ffmpeg.exe',
     [string]$FilePattern = '*.mkv'
 )

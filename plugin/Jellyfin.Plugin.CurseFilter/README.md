@@ -2,11 +2,15 @@
 
 The plugin adds the scheduled task **Create profanity-filtered audio**. The
 local configuration is enabled, uses CUDA, and processes every movie or episode
-under `C:\TV Shows` and `C:\Movies`. Existing filtered tracks are skipped. In
-the default `auto` mode, the task extracts the first embedded subtitle track and
-uses forced alignment. If no usable subtitles exist, it uses Whisper `small.en`
-word timestamps to analyze the audio directly. `AnalysisMode` can also force
-`captions` or `audio`.
+under `E:\TV Shows` and `E:\Movies`. The startup run begins after ten seconds
+and scans those roots directly, including files not yet indexed by Jellyfin.
+Existing filtered tracks and current clean-analysis markers are skipped. In
+the default `auto` mode, the task first checks for a matching `.srt` beside the
+video, canonicalizing a nonstandard same-folder name as `<video>.eng.srt` for
+Jellyfin. It then prefers a full non-forced embedded English track (regular
+English before SDH) and uses forced alignment. If no usable subtitles exist,
+it uses Whisper `small.en` word timestamps to analyze the audio directly.
+`AnalysisMode` can also force `captions` or `audio`.
 
 Generated filtered audio is retained separately in the project's private cache:
 

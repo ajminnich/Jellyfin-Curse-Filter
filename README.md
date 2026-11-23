@@ -12,8 +12,11 @@ pipeline that creates default English audio tracks with profanity replaced by a
 bleep. It supports both caption-guided alignment and caption-free Whisper audio
 analysis. Original media files are preserved as reversible backup files.
 
-In `auto` mode the pipeline uses embedded English captions when available, then
-uses Wav2Vec2 CTC forced alignment on the NVIDIA GPU to narrow each censor
+In `auto` mode the pipeline first looks for an English `.srt` beside the video,
+then prefers a full non-forced embedded English track (regular English before
+SDH). A matching same-folder subtitle with a nonstandard filename is copied to
+`<video>.eng.srt` so Jellyfin can discover it. The pipeline then uses Wav2Vec2
+CTC forced alignment on the NVIDIA GPU to narrow each censor
 interval to the spoken word. When captions are unavailable, Whisper `small.en`
 transcribes the first audio track with word timestamps and finds profanity
 directly from the audio. Results are cached in JSON before FFmpeg creates a
@@ -38,23 +41,29 @@ under the ignored backup extension.
 The checked-in defaults are:
 
 - Automatic caption-guided or caption-free English analysis
+- Same-folder subtitle discovery and Jellyfin-compatible sidecar naming
+- Full non-forced English embedded subtitles preferred over forced/SDH tracks
 - GPU analysis (`cuda`)
 - `facebook/wav2vec2-base-960h` alignment model
 - `small.en` Whisper transcription model
 - 1,000 Hz bleep
 - 40 ms timing padding
 - NVIDIA H.264 High/yuv420p compatibility video
-- AAC-in-Matroska filtered audio, retained separately and embedded for playback
+- AAC-in-Matroska filtered audio, with `5.1(side)` normalized to canonical AAC
+  5.1 signaling for Android TV compatibility, retained separately and embedded
+  for playback
 
 Run `scripts/process_wrexham.ps1` after installing the analysis dependencies.
 
 Caption-free command-line use does not require a subtitle argument:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\process_media.py "C:\Movies\Movie.mp4" --mode audio
+.\.venv\Scripts\python.exe scripts\process_media.py "E:\Movies\Movie.mp4" --mode audio
 ```
 
-The Jellyfin task processes both `C:\TV Shows` and `C:\Movies` by default. Set
+The Jellyfin task starts ten seconds after server startup and scans both
+`E:\TV Shows` and `E:\Movies` directly, so newly copied files are processed
+even before Jellyfin has indexed them. Set
 `AnalysisMode` to `auto` (the default), `captions`, or `audio` in the plugin XML
 configuration. Non-Matroska movie sources are converted to a promoted `.mkv`;
 the untouched source keeps its original extension plus `.cursefilter-original`.

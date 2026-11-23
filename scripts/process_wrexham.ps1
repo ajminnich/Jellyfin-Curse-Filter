@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $projectRoot '.venv\Scripts\python.exe'
 $mediaRoot = Join-Path $projectRoot 'Test Shows'
-$captionRoot = Join-Path $projectRoot 'work\captions'
+$captionRoot = 'E:\JellyFin\captions'
 
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Analysis environment not found at $python"
@@ -17,4 +17,3 @@ Get-ChildItem -LiteralPath $mediaRoot -File -Filter 'Welcome.to.Wrexham*.mkv' | 
         throw "Filtering failed for $($_.Name)"
     }
 }
-

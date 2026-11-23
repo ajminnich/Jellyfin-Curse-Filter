@@ -547,6 +547,58 @@ def _duration_seconds(ffprobe_path: Path, media_path: Path) -> float:
     return float(result.stdout.strip())
 
 
+def _audio_stream_properties(ffprobe_path: Path, media_path: Path) -> tuple[str, str, int]:
+    result = subprocess.run(
+        [
+            str(ffprobe_path),
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_name,channel_layout,channels",
+            "-of",
+            "json",
+            str(media_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    streams = json.loads(result.stdout).get("streams", [])
+    if not streams:
+        raise ValueError(f"No audio stream found in {media_path}")
+    stream = streams[0]
+    return (
+        str(stream.get("codec_name", "")).lower(),
+        str(stream.get("channel_layout", "")).lower(),
+        int(stream.get("channels", 0)),
+    )
+
+
+def _filtered_audio_codec(source_codec: str, channels: int) -> str:
+    # Android TV devices commonly pass AC-3/E-AC-3 through HDMI, but must
+    # decode AAC to multichannel PCM. Some TV/receiver combinations stall on
+    # that 5.1 PCM path even though the AAC decoder itself initializes. Keep
+    # multichannel Dolby-family sources on their proven E-AC-3 transport path.
+    if channels > 2 and source_codec.lower() in {"ac3", "eac3"}:
+        return "eac3"
+    return "aac"
+
+
+def _canonical_aac_layout_suffix(channel_layout: str) -> str:
+    if channel_layout.lower() != "5.1(side)":
+        return ""
+    # AAC's standard 5.1 channel configuration uses back-surround labels.
+    # Encoding 5.1(side) directly requires a Program Config Element, which
+    # some Android MediaCodec implementations fail to play. Preserve the six
+    # channels while relabeling side surrounds as their canonical AAC peers.
+    return (
+        ",channelmap="
+        "map=FL-FL|FR-FR|FC-FC|LFE-LFE|SL-BL|SR-BR:channel_layout=5.1"
+    )
+
+
 def _timeline_expression(intervals: Sequence[CensorInterval]) -> str:
     return "+".join(f"between(t,{interval.start:.3f},{interval.end:.3f})" for interval in intervals) or "0"
 
@@ -561,6 +613,11 @@ def render_bleep_audio(
         raise ValueError("Refusing to render a filtered track with no censor intervals")
     ffprobe_path = options.ffmpeg_path.with_name("ffprobe.exe")
     duration = _duration_seconds(ffprobe_path, media_path)
+    source_codec, channel_layout, channels = _audio_stream_properties(ffprobe_path, media_path)
+    output_codec = _filtered_audio_codec(source_codec, channels)
+    layout_suffix = (
+        _canonical_aac_layout_suffix(channel_layout) if output_codec == "aac" else ""
+    )
     commands: list[str] = []
     for interval in intervals:
         # Runtime audio commands take effect on the next decoded frame. Send
@@ -580,7 +637,8 @@ def render_bleep_audio(
         f"[0:a:0]volume@clean=1,asendcmd=c='{command_expression}'[clean];"
         "[1:a]volume@beep=0,"
         "pan=stereo|c0=c0|c1=c0[beep];"
-        "[clean][beep]amix=inputs=2:duration=first:normalize=0[out]"
+        "[clean][beep]amix=inputs=2:duration=first:normalize=0"
+        f"{layout_suffix}[out]"
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     filter_script_path: Path | None = None
@@ -595,6 +653,11 @@ def render_bleep_audio(
         ) as filter_script:
             filter_script.write(filter_graph)
             filter_script_path = Path(filter_script.name)
+        codec_arguments = (
+            ["-c:a", "eac3", "-b:a", "256k"]
+            if output_codec == "eac3"
+            else ["-c:a", "aac", "-profile:a", "aac_low", "-b:a", options.audio_bitrate]
+        )
         _run(
             [
                 options.ffmpeg_path,
@@ -612,10 +675,7 @@ def render_bleep_audio(
                 filter_script_path,
                 "-map",
                 "[out]",
-                "-c:a",
-                "aac",
-                "-b:a",
-                options.audio_bitrate,
+                *codec_arguments,
                 "-metadata:s:a:0",
                 "language=eng",
                 "-metadata:s:a:0",

@@ -7,7 +7,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from curse_filter.pipeline import (  # noqa: E402
     Cue,
+    _canonical_aac_layout_suffix,
     _ctc_viterbi_path,
+    _filtered_audio_codec,
     candidate_cues,
     caption_tokens,
     load_profanity,
@@ -16,6 +18,22 @@ from curse_filter.pipeline import (  # noqa: E402
     transcription_intervals,
     CensorInterval,
 )
+
+
+def test_aac_side_surround_layout_is_normalized_without_downmixing() -> None:
+    assert _canonical_aac_layout_suffix("5.1(side)") == (
+        ",channelmap="
+        "map=FL-FL|FR-FR|FC-FC|LFE-LFE|SL-BL|SR-BR:channel_layout=5.1"
+    )
+    assert _canonical_aac_layout_suffix("5.1") == ""
+    assert _canonical_aac_layout_suffix("stereo") == ""
+
+
+def test_multichannel_dolby_sources_use_eac3_for_hdmi_compatibility() -> None:
+    assert _filtered_audio_codec("eac3", 6) == "eac3"
+    assert _filtered_audio_codec("ac3", 6) == "eac3"
+    assert _filtered_audio_codec("aac", 6) == "aac"
+    assert _filtered_audio_codec("eac3", 2) == "aac"
 
 
 def test_whole_word_matching_does_not_match_innocent_longer_word() -> None:
