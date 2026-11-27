@@ -7,6 +7,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from curse_filter.pipeline import (  # noqa: E402
     Cue,
+    _audio_stream_properties,
     _canonical_aac_layout_suffix,
     _ctc_viterbi_path,
     _filtered_audio_codec,
@@ -16,6 +17,7 @@ from curse_filter.pipeline import (  # noqa: E402
     caption_tokens,
     load_profanity,
     merge_intervals,
+    render_bleep_audio,
     ProcessingOptions,
     transcription_intervals,
     CensorInterval,
@@ -182,3 +184,33 @@ def test_both_caption_alignments_use_one_model_call(monkeypatch) -> None:
     assert len(model_calls) == 1
     assert first[0]["start"] < cue.start
     assert bounded[0]["start"] >= cue.start
+
+
+
+def test_renderer_preserves_channels_when_mixing_the_tone(tmp_path: Path) -> None:
+    import subprocess
+
+    import pytest
+
+    ffmpeg = Path("C:/Program Files/Jellyfin/Server/ffmpeg.exe")
+    ffprobe = ffmpeg.with_name("ffprobe.exe")
+    if not ffmpeg.is_file() or not ffprobe.is_file():
+        pytest.skip("Jellyfin FFmpeg is required for the audio layout integration test")
+
+    options = ProcessingOptions(ffmpeg, tmp_path / "profanity.txt", tmp_path, tmp_path)
+    intervals = [CensorInterval(0.4, 0.8, "test", 1, "test")]
+    for layout, channels, output_layout in (("5.1(side)", 6, "5.1"), ("mono", 1, "mono")):
+        source = tmp_path / f"source-{channels}.wav"
+        output = tmp_path / f"filtered-{channels}.mka"
+        subprocess.run(
+            [
+                str(ffmpeg), "-v", "error", "-f", "lavfi", "-i",
+                f"anullsrc=r=48000:cl={layout}", "-t", "1.2", "-c:a", "pcm_s16le", str(source),
+            ],
+            check=True,
+        )
+        _, source_layout, source_channels = _audio_stream_properties(ffprobe, source)
+        assert source_channels == channels
+        assert source_layout == layout or (channels == 1 and not source_layout)
+        render_bleep_audio(source, output, intervals, options)
+        assert _audio_stream_properties(ffprobe, output) == ("aac", output_layout, channels)

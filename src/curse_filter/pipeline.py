@@ -700,13 +700,17 @@ def render_bleep_audio(
         _canonical_aac_layout_suffix(channel_layout) if output_codec == "aac" else ""
     )
     timeline = _timeline_expression(intervals)
-    # Fixed 10 ms blocks put the mute and tone on the same audio clock.
+    if channels < 1:
+        raise ValueError(f"Invalid audio channel count in {media_path}")
+    mix_layout = channel_layout if channel_layout not in {"", "unknown"} else f"{channels}c"
+    tone_mapping = "c0=c0|c1=c0" if channels > 1 else "c0=c0"
+    # Use the same audio clock and layout for both inputs to amix.
     filter_graph = (
-        "[0:a:0]aresample=48000:first_pts=0,asetnsamples=n=480:p=0,"
+        f"[0:a:0]aresample=48000:first_pts=0,aformat=channel_layouts={mix_layout},asetnsamples=n=480:p=0,"
         f"volume=0:enable='{timeline}'[clean];"
         "[1:a]asetnsamples=n=480:p=0,"
         f"volume=0:enable='not({timeline})',volume={options.beep_volume:.3f},"
-        "pan=stereo|c0=c0|c1=c0[beep];"
+        f"pan={mix_layout}|{tone_mapping}[beep];"
         "[clean][beep]amix=inputs=2:duration=first:normalize=0"
         f"{layout_suffix}[out]"
     )
