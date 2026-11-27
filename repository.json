@@ -12,7 +12,7 @@
         "changelog": "Checks caption-based bleep placement using the existing speech scores, keeps rendered bleeps aligned to the timing report, and handles Unicode paths in analysis reports.",
         "targetAbi": "10.11.11.0",
         "sourceUrl": "https://github.com/ajminnich/Jellyfin-Curse-Filter/releases/download/v0.2.5.0/Jellyfin.Plugin.CurseFilter_0.2.5.0.zip",
-        "checksum": "aec1e77785155b32d112e5c4f7f6474f1971f5ad2ae10aca05867b78da713724",
+        "checksum": "401da3ed6224797f4a9d4a5ad739896f5e378475a169fec8c1086a0fe8e2b596",
         "timestamp": "2026-11-27T18:18:45Z"
       }
     ]
