@@ -10,6 +10,8 @@ from curse_filter.pipeline import (  # noqa: E402
     _canonical_aac_layout_suffix,
     _ctc_viterbi_path,
     _filtered_audio_codec,
+    _forced_alignment_words,
+    _verify_cue_placement,
     candidate_cues,
     caption_tokens,
     load_profanity,
@@ -107,3 +109,76 @@ def test_whisper_word_timestamps_create_caption_free_intervals(tmp_path: Path) -
     assert intervals[0].cue_index == 7
     assert intervals[0].alignment == "whisper-audio"
     assert intervals[0].probability == 0.91
+
+
+def test_placement_check_retimes_a_bleep_with_bounded_audio_evidence() -> None:
+    cue = Cue(1, 10.0, 12.0, "Oh, shit.")
+    proposed = CensorInterval(9.5, 9.8, "shit", 1, "wav2vec2-ctc", 0.25)
+    bounded = CensorInterval(10.3, 10.6, "shit", 1, "wav2vec2-ctc", 0.8)
+
+    selected, checks = _verify_cue_placement(cue, [proposed], [bounded])
+
+    assert selected == [CensorInterval(10.3, 10.6, "shit", 1, "wav2vec2-ctc-cue-bounded", 0.8)]
+    assert checks[0]["status"] == "retimed"
+
+
+def test_placement_check_trims_an_early_start_when_both_paths_agree_on_the_end() -> None:
+    cue = Cue(1, 10.0, 12.0, "Damn it.")
+    proposed = CensorInterval(9.5, 10.5, "damn", 1, "wav2vec2-ctc", 0.21)
+    bounded = CensorInterval(10.26, 10.5, "damn", 1, "wav2vec2-ctc", 0.17)
+
+    selected, checks = _verify_cue_placement(cue, [proposed], [bounded])
+
+    assert selected[0].start == 10.26
+    assert checks[0]["status"] == "retimed"
+
+
+def test_placement_check_skips_a_weak_guess_and_flags_a_strong_unchecked_word() -> None:
+    cue = Cue(1, 10.0, 12.0, "Damn, damn, shit.")
+    first = CensorInterval(10.2, 10.5, "damn", 1, "wav2vec2-ctc", 0.6)
+    repeat = CensorInterval(10.8, 11.1, "damn", 1, "wav2vec2-ctc", 0.02)
+    strong = CensorInterval(11.5, 11.8, "shit", 1, "wav2vec2-ctc", 0.85)
+    missing = CensorInterval(11.65, 11.89, "shit", 1, "caption-proportional-fallback")
+
+    selected, checks = _verify_cue_placement(cue, [first, repeat, strong], [first, repeat, missing])
+
+    assert selected == [first, strong]
+    assert [check["status"] for check in checks] == ["confirmed", "skipped", "unconfirmed"]
+
+
+def test_both_caption_alignments_use_one_model_call(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import torch
+
+    from curse_filter import pipeline
+
+    frames = torch.full((20, 5), -10.0)
+    frames[:, 0] = 0.0
+    for frame, label in [(1, 1), (2, 2), (3, 3), (4, 4), (12, 1), (13, 2), (14, 3), (15, 4)]:
+        frames[frame, label] = 10.0 if frame < 10 else 8.0
+
+    class Processor:
+        tokenizer = SimpleNamespace(
+            get_vocab=lambda: {"D": 1, "A": 2, "M": 3, "N": 4},
+            word_delimiter_token="|",
+            pad_token_id=0,
+        )
+
+        def __call__(self, *_args, **_kwargs):
+            return SimpleNamespace(input_values=torch.zeros(1, 32000))
+
+    model_calls = []
+
+    def model(input_values):
+        model_calls.append(input_values)
+        return SimpleNamespace(logits=frames.unsqueeze(0))
+
+    monkeypatch.setattr(pipeline, "_read_mono_pcm16", lambda _path: ([0] * 32000, 16000))
+    cue = Cue(1, 1.0, 1.8, "Damn")
+
+    first, bounded = _forced_alignment_words(Processor(), model, Path("cue.wav"), cue, 0.0, "cpu")
+
+    assert len(model_calls) == 1
+    assert first[0]["start"] < cue.start
+    assert bounded[0]["start"] >= cue.start

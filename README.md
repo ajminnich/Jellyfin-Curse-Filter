@@ -16,8 +16,12 @@ In `auto` mode the pipeline first looks for an English `.srt` beside the video,
 then prefers a full non-forced embedded English track (regular English before
 SDH). A matching same-folder subtitle with a nonstandard filename is copied to
 `<video>.eng.srt` so Jellyfin can discover it. The pipeline then uses Wav2Vec2
-CTC forced alignment on the NVIDIA GPU to narrow each censor
-interval to the spoken word. When captions are unavailable, Whisper `small.en`
+CTC forced alignment on the NVIDIA GPU to propose word timings. A second
+pass in the Python pipeline reuses those scores and checks the alignment
+within the subtitle cue. It can retime a bleep or skip a weak match. The JSON
+report records what happened to each proposed bleep, including strong
+first-pass matches that the check could not confirm.
+When captions are unavailable, Whisper `small.en`
 transcribes the first audio track with word timestamps and finds profanity
 directly from the audio. Results are cached in JSON before FFmpeg creates a
 separate audio file. For Jellyfin playback, the plugin uses the NVIDIA GPU to

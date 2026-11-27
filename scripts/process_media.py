@@ -32,7 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transcription-model", default="small.en")
     parser.add_argument("--mode", default="auto", choices=("auto", "captions", "audio"))
     parser.add_argument("--device", default="cuda", choices=("cuda", "cpu"))
-    parser.add_argument("--dry-run", action="store_true", help="Inventory matching caption cues only")
+    analysis = parser.add_mutually_exclusive_group()
+    analysis.add_argument("--dry-run", action="store_true", help="Inventory matching caption cues only")
+    analysis.add_argument("--analyze-only", action="store_true", help="Write the timing report without rendering audio")
     return parser
 
 
@@ -71,10 +73,11 @@ def main() -> int:
             )
         )
         return 0
-    report = process_media(args.media, args.captions, output, options)
+    report = process_media(args.media, args.captions, output, options, render_audio=not args.analyze_only)
     print(report)
     return 0
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(errors="backslashreplace")
     raise SystemExit(main())

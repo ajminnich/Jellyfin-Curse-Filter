@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import os
 import re
 import subprocess
 import tempfile
 import wave
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -250,49 +251,43 @@ def _read_mono_pcm16(path: Path) -> tuple[Any, int]:
 
 def _ctc_viterbi_path(log_probs: Any, target_ids: Sequence[int], blank_id: int) -> list[int]:
     """Return the best expanded-CTC state for every emission frame."""
-    import torch
+    import numpy as np
 
-    frame_count = int(log_probs.shape[0])
-    expanded: list[int] = [blank_id]
-    for token_id in target_ids:
-        expanded.extend((int(token_id), blank_id))
-    state_count = len(expanded)
-    if state_count > frame_count * 2 + 1:
+    emissions = log_probs.numpy()
+    frame_count = len(emissions)
+    if not frame_count or len(target_ids) > frame_count:
         raise ValueError("Caption text is too long for the available audio frames")
 
-    negative_infinity = torch.tensor(float("-inf"), dtype=log_probs.dtype)
-    previous = torch.full((state_count,), negative_infinity, dtype=log_probs.dtype)
-    previous[0] = log_probs[0, blank_id]
-    if state_count > 1:
-        previous[1] = log_probs[0, expanded[1]]
-    backpointers = torch.full((frame_count, state_count), -1, dtype=torch.int16)
+    expanded = np.full(2 * len(target_ids) + 1, blank_id, dtype=np.intp)
+    expanded[1::2] = target_ids
+    states = np.arange(len(expanded), dtype=np.intp)
+    skip_allowed = (expanded[2:] != blank_id) & (expanded[2:] != expanded[:-2])
+    previous = np.full(len(expanded), -np.inf, dtype=emissions.dtype)
+    previous[:2] = emissions[0, expanded[:2]]
+    backpointers = np.empty((frame_count, len(expanded)), dtype=np.int32)
 
     for frame in range(1, frame_count):
-        current = torch.full((state_count,), negative_infinity, dtype=log_probs.dtype)
-        for state, token_id in enumerate(expanded):
-            choices = [(previous[state], state)]
-            if state > 0:
-                choices.append((previous[state - 1], state - 1))
-            if (
-                state > 1
-                and token_id != blank_id
-                and token_id != expanded[state - 2]
-            ):
-                choices.append((previous[state - 2], state - 2))
-            best_score, best_state = max(choices, key=lambda choice: float(choice[0]))
-            current[state] = best_score + log_probs[frame, token_id]
-            backpointers[frame, state] = best_state
-        previous = current
+        best = previous.copy()
+        origins = states.copy()
+        # Keep the earlier choice on ties: stay, advance, then skip a blank.
+        advance = previous[:-1] > best[1:]
+        best[1:] = np.where(advance, previous[:-1], best[1:])
+        origins[1:] = np.where(advance, states[:-1], origins[1:])
+        skip = skip_allowed & (previous[:-2] > best[2:])
+        best[2:] = np.where(skip, previous[:-2], best[2:])
+        origins[2:] = np.where(skip, states[:-2], origins[2:])
+        previous = best + emissions[frame, expanded]
+        backpointers[frame] = origins
 
-    final_states = [state_count - 1]
-    if state_count > 1:
-        final_states.append(state_count - 2)
-    state = max(final_states, key=lambda candidate: float(previous[candidate]))
+    state = len(expanded) - 1
+    if state > 0 and previous[state - 1] > previous[state]:
+        state -= 1
+    if not np.isfinite(previous[state]):
+        raise ValueError("Caption text cannot be aligned to the available audio frames")
+
     path = [state]
     for frame in range(frame_count - 1, 0, -1):
         state = int(backpointers[frame, state])
-        if state < 0:
-            raise RuntimeError("Unable to backtrace CTC alignment")
         path.append(state)
     path.reverse()
     return path
@@ -303,14 +298,15 @@ def _forced_alignment_words(
     model: Any,
     wav_path: Path,
     cue: Cue,
+    clip_start: float,
     device: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     import torch
 
     audio, sample_rate = _read_mono_pcm16(wav_path)
     words = [token for token in caption_tokens(cue.text) if token.normalized]
-    if not words:
-        return []
+    if not words or not len(audio):
+        return [], []
     vocabulary = processor.tokenizer.get_vocab()
     delimiter = processor.tokenizer.word_delimiter_token
     target_ids: list[int] = []
@@ -329,7 +325,7 @@ def _forced_alignment_words(
             target_ids.append(vocabulary[letter])
             target_word_indexes.append(word_index)
     if not target_ids:
-        return []
+        return [], []
 
     inputs = processor(audio, sampling_rate=sample_rate, return_tensors="pt")
     input_values = inputs.input_values.to(device)
@@ -337,8 +333,49 @@ def _forced_alignment_words(
         logits = model(input_values).logits[0]
     log_probs = logits.log_softmax(dim=-1).float().cpu()
     blank_id = int(processor.tokenizer.pad_token_id)
-    state_path = _ctc_viterbi_path(log_probs, target_ids, blank_id)
     seconds_per_frame = (len(audio) / sample_rate) / int(log_probs.shape[0])
+    first_pass = _alignment_word_timings(
+        log_probs, target_ids, target_word_indexes, usable_words, blank_id, seconds_per_frame
+    )
+
+    # Recheck the path using the same model scores, with audio before the cue
+    # excluded and a small grace period after the subtitle ends.
+    first_frame = max(0, math.floor((cue.start - clip_start) / seconds_per_frame))
+    last_frame = max(first_frame, math.ceil((cue.end + 0.14 - clip_start) / seconds_per_frame))
+    # The best path is still valid inside the smaller window if it already fits.
+    if first_pass and all(
+        word["start"] >= first_frame * seconds_per_frame
+        and word["end"] <= last_frame * seconds_per_frame
+        for word in first_pass
+    ):
+        return first_pass, first_pass
+
+    bounded = _alignment_word_timings(
+        log_probs[first_frame:last_frame],
+        target_ids,
+        target_word_indexes,
+        usable_words,
+        blank_id,
+        seconds_per_frame,
+        first_frame=first_frame,
+    )
+    return first_pass, bounded
+
+
+def _alignment_word_timings(
+    log_probs: Any,
+    target_ids: Sequence[int],
+    target_word_indexes: Sequence[int],
+    usable_words: Sequence[CaptionToken],
+    blank_id: int,
+    seconds_per_frame: float,
+    *,
+    first_frame: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        state_path = _ctc_viterbi_path(log_probs, target_ids, blank_id)
+    except ValueError:
+        return []
 
     aligned: list[dict[str, Any]] = []
     for word_index, source_word in enumerate(usable_words):
@@ -359,8 +396,8 @@ def _forced_alignment_words(
         aligned.append(
             {
                 "word": source_word.text,
-                "start": frames[0] * seconds_per_frame,
-                "end": (frames[-1] + 1) * seconds_per_frame,
+                "start": (first_frame + frames[0]) * seconds_per_frame,
+                "end": (first_frame + frames[-1] + 1) * seconds_per_frame,
                 "probability": sum(confidences) / len(confidences),
             }
         )
@@ -497,6 +534,50 @@ def _transcribe_audio(
     return transcription_intervals(result, profanity, options), result
 
 
+def _verify_cue_placement(
+    cue: Cue,
+    proposed: Sequence[CensorInterval],
+    bounded: Sequence[CensorInterval],
+) -> tuple[list[CensorInterval], list[dict[str, Any]]]:
+    selected: list[CensorInterval] = []
+    checks: list[dict[str, Any]] = []
+    for interval, checked in zip(proposed, bounded, strict=True):
+        revised = None
+        if checked.probability is not None:
+            checked = replace(checked, alignment="wav2vec2-ctc-cue-bounded")
+            start_change = checked.start - interval.start
+            end_change = abs(checked.end - interval.end)
+            # If the two paths agree on the end, trimming a long extension
+            # into the previous cue needs less evidence than moving the whole word.
+            trims_leading_dialogue = (
+                interval.start < cue.start - 0.14 and start_change > 0.10 and end_change <= 0.10
+            )
+            minimum_probability = 0.15 if trims_leading_dialogue else 0.30
+            if checked.probability >= minimum_probability:
+                revised = checked if max(abs(start_change), end_change) > 0.10 else interval
+
+        if revised is interval:
+            status = "confirmed"
+        elif revised is not None:
+            status = "retimed"
+        elif interval.probability is not None and interval.probability >= 0.70:
+            status = "unconfirmed"
+            revised = interval
+        else:
+            status = "skipped"
+
+        if revised is not None:
+            selected.append(revised)
+        checks.append(
+            {
+                "status": status,
+                "proposed": asdict(interval),
+                "bounded": asdict(checked) if checked.probability is not None else None,
+            }
+        )
+    return selected, checks
+
+
 def merge_intervals(intervals: Iterable[CensorInterval], maximum_gap: float = 0.03) -> list[CensorInterval]:
     ordered = sorted(intervals, key=lambda interval: (interval.start, interval.end))
     if not ordered:
@@ -618,24 +699,13 @@ def render_bleep_audio(
     layout_suffix = (
         _canonical_aac_layout_suffix(channel_layout) if output_codec == "aac" else ""
     )
-    commands: list[str] = []
-    for interval in intervals:
-        # Runtime audio commands take effect on the next decoded frame. Send
-        # the mute/bleep transition slightly early so short words do not leak
-        # before that frame boundary; the reported censor interval is unchanged.
-        command_start = max(0.0, interval.start - 0.06)
-        commands.extend(
-            (
-                f"{command_start:.3f} volume@clean volume 0",
-                f"{command_start:.3f} volume@beep volume {options.beep_volume:.3f}",
-                f"{interval.end:.3f} volume@clean volume 1",
-                f"{interval.end:.3f} volume@beep volume 0",
-            )
-        )
-    command_expression = ";".join(commands)
+    timeline = _timeline_expression(intervals)
+    # Fixed 10 ms blocks put the mute and tone on the same audio clock.
     filter_graph = (
-        f"[0:a:0]volume@clean=1,asendcmd=c='{command_expression}'[clean];"
-        "[1:a]volume@beep=0,"
+        "[0:a:0]aresample=48000:first_pts=0,asetnsamples=n=480:p=0,"
+        f"volume=0:enable='{timeline}'[clean];"
+        "[1:a]asetnsamples=n=480:p=0,"
+        f"volume=0:enable='not({timeline})',volume={options.beep_volume:.3f},"
         "pan=stereo|c0=c0|c1=c0[beep];"
         "[clean][beep]amix=inputs=2:duration=first:normalize=0"
         f"{layout_suffix}[out]"
@@ -695,6 +765,8 @@ def process_media(
     caption_path: Path | None,
     output_path: Path,
     options: ProcessingOptions,
+    *,
+    render_audio: bool = True,
 ) -> Path:
     media_path = media_path.resolve()
     caption_path = caption_path.resolve() if caption_path is not None else None
@@ -709,6 +781,7 @@ def process_media(
         os.environ["PATH"] = ffmpeg_directory + os.pathsep + os.environ.get("PATH", "")
     profanity = load_profanity(options.profanity_path)
     intervals: list[CensorInterval] = []
+    placement_checks: list[dict[str, Any]] = []
     candidate_count = 0
     transcription_word_count = 0
     options.report_dir.mkdir(parents=True, exist_ok=True)
@@ -724,24 +797,19 @@ def process_media(
         if candidates:
             processor, model = _load_alignment_model(options)
             with tempfile.TemporaryDirectory(prefix="alignment-", dir=clip_root) as temp_dir:
+                wav_path = Path(temp_dir) / "cue.wav"
                 for cue in candidates:
-                    wav_path = Path(temp_dir) / f"cue-{cue.index}.wav"
                     clip_start = _extract_cue_audio(
-                        options.ffmpeg_path,
-                        media_path,
-                        cue,
-                        options.cue_padding,
-                        wav_path,
+                        options.ffmpeg_path, media_path, cue, options.cue_padding, wav_path
                     )
-                    try:
-                        words = _forced_alignment_words(processor, model, wav_path, cue, options.device)
-                    except ValueError:
-                        # Dense or accessibility-heavy subtitle cues can contain more
-                        # characters than the short audio window has CTC frames. Keep
-                        # the rest of the item word-aligned and use the bounded
-                        # caption-proportional fallback for only this cue.
-                        words = []
-                    intervals.extend(align_cue(cue, clip_start, words, profanity, options))
+                    words, bounded_words = _forced_alignment_words(
+                        processor, model, wav_path, cue, clip_start, options.device
+                    )
+                    proposed = align_cue(cue, clip_start, words, profanity, options)
+                    bounded = align_cue(cue, clip_start, bounded_words, profanity, options)
+                    verified, checks = _verify_cue_placement(cue, proposed, bounded)
+                    intervals.extend(verified)
+                    placement_checks.extend(checks)
     else:
         intervals, transcription = _transcribe_audio(media_path, profanity, options)
         transcription_word_count = sum(
@@ -751,7 +819,7 @@ def process_media(
     merged = merge_intervals(intervals)
     report_path = options.report_dir / f"{media_path.stem}.censor.json"
     report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "media_path": str(media_path),
         "caption_path": str(caption_path) if caption_path is not None else None,
         "output_path": str(output_path),
@@ -765,10 +833,11 @@ def process_media(
         },
         "candidate_cue_count": candidate_count,
         "transcription_word_count": transcription_word_count,
+        "placement_checks": placement_checks,
         "interval_count": len(merged),
         "intervals": [asdict(interval) for interval in merged],
     }
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    if merged:
+    if render_audio and merged:
         render_bleep_audio(media_path, output_path, merged, options)
     return report_path

@@ -1,14 +1,14 @@
 {
   "category": "MoviesAndShows",
-  "changelog": "Improves English subtitle discovery, fixes surround-audio playback on Android TV, and pares back the default English profanity list.",
+  "changelog": "Checks caption-based bleep placement using the existing speech scores, keeps rendered bleeps aligned to the timing report, and handles Unicode paths in analysis reports.",
   "description": "Makes caption- or audio-analyzed bleeped media the default while preserving each original as a reversible backup.",
   "guid": "6f461ea8-0e47-4dc9-b27f-ab182516aed9",
   "name": "Curse Filter",
   "overview": "Caption-guided or caption-free profanity bleeping for Jellyfin libraries",
   "owner": "ajminnich",
   "targetAbi": "10.11.11.0",
-  "timestamp": "2026-11-23T01:24:53.0000000Z",
-  "version": "0.2.4.0",
+  "timestamp": "2026-11-27T18:18:45Z",
+  "version": "0.2.5.0",
   "status": "Active",
   "autoUpdate": false,
   "assemblies": []
